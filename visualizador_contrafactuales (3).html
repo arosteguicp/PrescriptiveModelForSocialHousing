@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Counterfactual Viewer - Social Housing Habitability</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+  :root{
+    --navy:#16233A; --ink:#1F2933; --muted:#667085; --line:#D8DEE8;
+    --bg:#EEF1F5; --panel:#FFFFFF;
+    --blue:#0072B2; --orange:#D55E00; --red:#B42318; --green:#137A4B; --slate:#3B5B7A;
+    --serif:Georgia,"Times New Roman",serif;
+    --sans:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{font-family:var(--sans);color:var(--ink);background:var(--bg);display:flex;flex-direction:column;height:100vh;overflow:hidden;font-size:14px}
+
+  .topstrip{background:var(--navy);color:#fff;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .brand h1{font-family:var(--serif);font-size:18px;font-weight:600;margin:0;letter-spacing:.2px}
+  .brand p{margin:2px 0 0;font-size:12px;color:#B9C4D6}
+  .datactl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .chip{font-size:11.5px;padding:3px 10px;border-radius:12px;border:1px solid #3A4E73;color:#B9C4D6;display:inline-flex;align-items:center;gap:6px}
+  .chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#8A97AD}
+  .chip.ok{color:#E6F4EC;border-color:#2F7A57}
+  .chip.ok::before{background:#3FBF88}
+  .loadbtn{padding:6px 14px;border:1px solid #6F82A6;border-radius:6px;background:transparent;color:#fff;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+  .loadbtn:hover{background:#22365A}
+
+  .banner{background:#FFF4E5;color:#7A4A00;border-bottom:1px solid #F0D3A6;padding:7px 20px;font-size:12.5px;display:none}
+
+  .controls{background:var(--panel);border-bottom:1px solid var(--line);padding:10px 20px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:11.5px;color:var(--muted);font-weight:600}
+  select{min-width:250px;max-width:360px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;font:inherit;color:var(--ink)}
+  select:disabled{background:#F4F6F9;color:#98A2B3}
+  .action{padding:8px 14px;border:1px solid var(--navy);background:#fff;color:var(--navy);border-radius:6px;font:inherit;font-weight:600;cursor:pointer;white-space:nowrap}
+  .action:hover:not(:disabled){background:var(--navy);color:#fff}
+  .action.on{background:var(--navy);color:#fff}
+  .action:disabled{opacity:.4;cursor:not-allowed}
+  .sep{width:1px;align-self:stretch;background:var(--line);margin:0 2px}
+
+  .main{flex:1;min-height:0;display:grid;grid-template-columns:1fr 330px;gap:14px;padding:14px 20px 16px}
+  .mapwrap{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;min-height:300px}
+  .mapbox{position:relative;flex:1;min-height:0;background:#DFE5EC}
+  #map{position:absolute;top:0;right:0;bottom:0;left:0}
+
+  /* Title strip: one line, full width of the map. Change the font sizes here. */
+  .titlebar{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:6px 16px;background:#fff;border-bottom:1px solid var(--line);white-space:nowrap}
+  .titlebar .t-left{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .titlebar .t-name{font-family:var(--serif);font-size:15px;font-weight:700;color:var(--navy);overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .titlebar .t-sub{font-size:12px;color:var(--muted);flex-shrink:0}
+  .titlebar .t-right{flex-shrink:0;font-size:12px;color:var(--muted)}
+  .score{font-family:var(--serif);font-weight:700;font-size:16px;margin:0 4px 0 6px}
+  .score.red{color:var(--red)}
+  .score.green{color:var(--green)}
+  .before{font-size:12px;color:var(--muted)}
+
+  .legend{position:absolute;left:10px;bottom:24px;z-index:1200;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:11px;color:var(--ink);line-height:1.8}
+  .legend .li{display:flex;align-items:center;gap:8px}
+  .legend .sw{width:13px;height:13px;border-radius:50%;display:inline-block;flex-shrink:0}
+  .legend .multi{background:conic-gradient(#0072B2 0 25%,#C1272D 0 50%,#558B2F 0 75%,#D55E00 0)}
+  .legend .ringed{box-shadow:0 0 0 2px #111}
+  .legend .ln{width:18px;height:0;border-top:2.5px solid #111;display:inline-block;flex-shrink:0}
+  .legend .ar{width:18px;height:10px;border:1.5px solid var(--slate);background:rgba(59,91,122,.10);display:inline-block;flex-shrink:0}
+
+  .status{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:1200;background:var(--navy);color:#fff;font-size:12px;line-height:1.4;padding:7px 16px;border-radius:14px;display:none;max-width:82%;text-align:center}
+  .status.err{background:var(--red)}
+
+  .side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;display:flex;flex-direction:column;gap:16px}
+  .sec-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .sec-head h2{font-size:13.5px;margin:0;font-weight:700;color:var(--navy)}
+  .pill{border:1px solid var(--navy);background:#fff;color:var(--navy);border-radius:999px;padding:3px 14px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+  .pill:hover:not(:disabled){background:var(--navy);color:#fff}
+  .pill:disabled{opacity:.4;cursor:not-allowed}
+  details.manual{border:1px solid var(--line);border-radius:8px;padding:9px 12px;background:#FAFBFC}
+  details.manual summary{cursor:pointer;font-weight:700;font-size:13.5px;color:var(--navy)}
+  .mform{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .mform .mrow{display:grid;grid-template-columns:78px 1fr;gap:8px;align-items:center}
+  .mform label{font-size:12.5px;color:var(--muted)}
+  .mform label.chk{display:flex;align-items:center;gap:6px;color:var(--ink)}
+  .mform input[type=text],.mform input[type=number]{padding:6px 8px;border:1px solid var(--line);border-radius:6px;font:inherit;width:100%;background:#fff}
+  .mform input:disabled{background:#F4F6F9}
+  .qrow{display:grid;grid-template-columns:22px 1fr 64px;gap:8px;align-items:center;margin-bottom:5px}
+  .qrow .ico{width:20px;height:20px;display:flex}.qrow .ico svg{width:20px;height:20px}
+  .qrow label{color:var(--ink)}
+  table.mt{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+  table.mt th{text-align:left;color:var(--muted);font-weight:600;padding:3px 4px;border-bottom:1px solid var(--line)}
+  table.mt td{padding:3px 4px;border-bottom:1px solid #EEF1F5}
+  table.mt td:not(:first-child),table.mt th:not(:first-child){text-align:right;font-variant-numeric:tabular-nums}
+  .poirow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #EEF1F5}
+  .poirow:last-child{border-bottom:none}
+  .poirow .ico{width:22px;height:22px;color:var(--navy);display:flex;flex-shrink:0}
+  .poirow .ico svg{width:22px;height:22px}
+  .poirow .lbl{flex:1;font-size:13.5px}
+  .poirow .cnt{font-weight:700;font-variant-numeric:tabular-nums}
+  .poirow .cnt.dim{color:#B0B8C4;font-weight:600}
+  .poirow .note{font-size:11px;color:var(--red);margin-left:4px}
+  .kv{margin-top:8px;font-size:12.5px;color:var(--muted);display:grid;grid-template-columns:auto 1fr;gap:3px 12px}
+  .kv b{color:var(--ink);font-weight:600;text-align:right}
+  .caption{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.45}
+  .caption.warn{color:#7A4A00}
+  .empty{color:var(--muted);font-size:12.5px;padding:6px 0}
+
+  .poi-badge{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.38)}
+  .poi-badge svg{width:14px;height:14px}
+  .poi-badge.cf{width:30px;height:30px;box-shadow:0 0 0 2.5px #111,0 2px 6px rgba(0,0,0,.4)}
+  .poi-badge.cf svg{width:17px;height:17px}
+  .house-badge{width:38px;height:38px;border-radius:50%;background:var(--navy);color:#fff;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center}
+  .house-badge svg{width:22px;height:22px}
+  .leaflet-popup-content{font-family:var(--sans);font-size:12.5px}
+
+  @media (max-width:980px){
+    body{height:auto;overflow:auto}
+    .main{grid-template-columns:1fr}
+    .mapwrap{height:70vh}
+  }
+</style>
+</head>
+<body>
+
+<header class="topstrip">
+  <div class="brand">
+    <h1>Counterfactual Viewer</h1>
+    <p>Habitability of Techo Propio and MiVivienda projects in Lima</p>
+  </div>
+  <div class="datactl">
+    <span class="chip" id="chipProjects">Projects</span>
+    <span class="chip" id="chipCF">Counterfactuals</span>
+    <span class="chip" id="chipDetail">POI detail</span>
+    <span class="chip" id="chipNet">Road networks (optional)</span>
+    <label class="loadbtn" for="fileInput">Load data files</label>
+    <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv,.json" style="display:none">
+  </div>
+</header>
+<div class="banner" id="fileBanner">
+  This page was opened as a local file, so the browser will block the road network download.
+  Serve it instead with <code>python3 -m http.server 8000</code> and open <code>http://localhost:8000</code>.
+</div>
+
+<section class="controls">
+  <div class="field">
+    <label for="selProject">Select non-livable project</label>
+    <select id="selProject" disabled><option value="">Load the data files first</option></select>
+  </div>
+  <button class="action" id="btnIso" disabled>Draw 15 min walking area</button>
+  <span class="sep"></span>
+  <div class="field">
+    <label for="selCF">Select counterfactual</label>
+    <select id="selCF" disabled><option value="">-</option></select>
+  </div>
+  <button class="action" id="btnRoutes" disabled>Trace routes to house</button>
+</section>
+
+<section class="main">
+  <div class="mapwrap">
+    <div class="titlebar" id="titleCard"></div>
+    <div class="mapbox">
+      <div id="map"></div>
+      <div class="legend">
+        <div class="li"><span class="sw" style="background:var(--navy)"></span>Project</div>
+        <div class="li"><span class="sw multi"></span>Existing POI (color by type)</div>
+        <div class="li"><span class="sw multi ringed"></span>Counterfactual POI</div>
+        <div class="li"><span class="ln"></span>Walking route</div>
+        <div class="li"><span class="ar"></span>15 min walking area</div>
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <div>
+      <div class="sec-head"><h2>POIs as is</h2><button class="pill" id="btnExisting" disabled>Hide</button></div>
+      <div id="existingList"><div class="empty">Select a project.</div></div>
+      <div class="caption warn" id="existingWarn" style="display:none"></div>
+    </div>
+    <details class="manual" id="manualBox">
+      <summary>Placement test at a custom location</summary>
+      <div class="mform">
+        <div class="mrow"><label for="inLat">Latitude</label><input type="text" id="inLat" inputmode="decimal" placeholder="-12.0464" autocomplete="off"></div>
+        <div class="mrow"><label for="inLon">Longitude</label><input type="text" id="inLon" inputmode="decimal" placeholder="-77.0428" autocomplete="off"></div>
+        <div class="caption" style="margin:-2px 0 2px">You can paste "lat, lon" from Google Maps into the latitude box.</div>
+        <div id="manualQty"></div>
+        <label class="chk"><input type="checkbox" id="inOSM" checked> Include existing POIs from OpenStreetMap</label>
+        <button class="action" id="btnManual" style="width:100%" disabled>Place POIs here</button>
+        <div id="manualResults"></div>
+      </div>
+    </details>
+    <div>
+      <div class="sec-head"><h2>POIs of counterfactual</h2><button class="pill" id="btnCF" disabled>Show</button></div>
+      <div id="cfList"><div class="empty">Select a project.</div></div>
+      <div id="cfSummary"></div>
+    </div>
+  </aside>
+</section>
+
+<script>
+/* ==== LOGIC START ==== */
+/* Everything in this block is free of DOM and map dependencies. */
+
+const METODO = 'DiCE_autoencoder';   // counterfactual branch shown for now
+const THRESHOLD = 0.60;              // habitability threshold tau
+const WALK_BUDGET_M = 1000;          // 15 minute walking catchment, network distance
+const BBOX_PAD_M = 1300;             // road network download half-width
+const GRID_STEP_M = 60;              // spacing of candidate locations
+const MAX_CANDIDATES = 800;
+const CROSS_SEP_M = 40;              // minimum spacing between any two new POIs
+const MU_FALLBACK = 300;
+const MANUAL_ID = -1;                // virtual project used by the custom location test
+
+const CATS = [
+  {key:'Bus',              label:'Bus stops',       icon:'bus', color:'#0072B2',        minSep:120, snap:true,  mutable:true},
+  {key:'Primaria',         label:'Primary schools', icon:'school', color:'#6A3D9A',     minSep:150, mutable:true},
+  {key:'Tienda',           label:'Stores',          icon:'store', color:'#D55E00',      minSep:100, mutable:true},
+  {key:'Hospitales',       label:'Hospitals',       icon:'hospital', color:'#C1272D'},
+  {key:'Alimentacion',     label:'Food',            icon:'food', color:'#C2185B',       minSep:80,  mutable:true},
+  {key:'Farmacias',        label:'Pharmacies',      icon:'pharmacy', color:'#00897B',   minSep:100, mutable:true},
+  {key:'EspaciosPublicos', label:'Public spaces',   icon:'tree', color:'#558B2F',       minSep:150, mutable:true},
+  {key:'Universitaria',    label:'Universities',    icon:'university', color:'#455A64'},
+];
+const CAT = Object.fromEntries(CATS.map(c => [c.key, c]));
+const MUTABLE = CATS.filter(c => c.mutable).map(c => c.key);
+
+// Used only when the counterfactual file has no costo_total column.
+const UNIT_COST = {Bus:10, Primaria:200, Alimentacion:20, Tienda:30, EspaciosPublicos:100, Farmacias:40};
+
+const ICON_PATHS = {
+  bus: '<rect x="5" y="3.5" width="14" height="14" rx="2.5"/><path d="M5 10h14M8 13.8h.01M16 13.8h.01M7.5 17.5V20M16.5 17.5V20"/>',
+  school: '<path d="M2.5 9.5L12 5l9.5 4.5L12 14z"/><path d="M6.5 11.8v4.4c0 1.4 2.5 2.8 5.5 2.8s5.5-1.4 5.5-2.8v-4.4"/><path d="M21.5 9.5v5.5"/>',
+  store: '<path d="M4 9.5l1.6-5h12.8L20 9.5z"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/>',
+  hospital: '<rect x="4.5" y="4" width="15" height="16" rx="1.6"/><path d="M12 8v6M9 11h6"/><path d="M10 20v-3h4v3"/>',
+  food: '<path d="M6 3v5.5a2.5 2.5 0 0 0 5 0V3M8.5 3v5.5M8.5 11v10"/><path d="M17 21V3c-2.2 1.2-3.2 3.6-3.2 6.6 0 1.6 1 2.4 3.2 2.4"/>',
+  pharmacy: '<g transform="rotate(-40 12 12)"><rect x="3" y="8.5" width="18" height="7" rx="3.5"/><path d="M12 8.5v7"/></g>',
+  tree: '<circle cx="12" cy="9" r="5.5"/><path d="M12 14.5V21M8.5 21h7"/>',
+  university: '<path d="M3 9.5L12 4l9 5.5z"/><path d="M6 12v6M10 12v6M14 12v6M18 12v6"/><path d="M3.5 20.5h17"/>',
+  house: '<path d="M4 11.5L12 4l8 7.5"/><path d="M6.5 10v10h11V10"/><path d="M10 20v-5h4v5"/>',
+};
+function svgIcon(name){
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+       + (ICON_PATHS[name] || '') + '</svg>';
+}
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ---------- CSV ---------- */
+function parseCSV(text){
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = []; let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (inQ){
+      if (c === '"'){ if (text[i+1] === '"'){ field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field.length || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+function truthy(v){ return v === true || String(v).trim().toLowerCase() === 'true' || String(v).trim() === '1'; }
+
+/* ---------- ingestion of the three input files ---------- */
+function ingestProjects(records){
+  const m = new Map();
+  for (const r of records){
+    const id = Number(r.id_proyecto), lat = Number(r.LATITUD), lon = Number(r.LONGITUD);
+    if (!isFinite(id) || !isFinite(lat) || !isFinite(lon)) continue;
+    if (r.precision_geocoding && !['direccion','calle'].includes(String(r.precision_geocoding))) continue;
+    if (m.has(id)) continue;
+    m.set(id, {id, nombre: String(r.PROYECTO ?? '').trim() || ('Project ' + id),
+               distrito: String(r.DISTRITO ?? '').trim(), lat, lon});
+  }
+  return m;
+}
+function ingestCounterfactuals(rows){
+  const header = rows[0].map(h => h.trim());
+  const ix = {}; header.forEach((h, i) => ix[h] = i);
+  const out = new Map();
+  for (let i = 1; i < rows.length; i++){
+    const r = rows[i]; if (r.length < header.length - 2) continue;
+    if (r[ix.metodo] !== METODO) continue;
+    const id = Number(r[ix.id_proyecto]); if (!isFinite(id)) continue;
+    const deltas = {};
+    for (const k of MUTABLE) deltas[k] = Math.max(0, Math.round(Number(r[ix['+' + k]]) || 0));
+    const existing = {};
+    for (const c of CATS) if ((c.key + '_existente') in ix) existing[c.key] = Number(r[ix[c.key + '_existente']]);
+    let cost = ('costo_total' in ix) ? Number(r[ix.costo_total]) : NaN;
+    if (!isFinite(cost)) cost = MUTABLE.reduce((s, k) => s + deltas[k] * (UNIT_COST[k] || 0), 0);
+    const rec = {
+      cf_num: Number(r[ix.cf_num]), scoreBefore: Number(r[ix.score_antes]), scoreAfter: Number(r[ix.score_despues]),
+      deltas, existing, cost,
+      deltaScore: ('delta_score' in ix) ? Number(r[ix.delta_score]) : (Number(r[ix.score_despues]) - Number(r[ix.score_antes])),
+      valid: ('valido' in ix) ? truthy(r[ix.valido]) : null,
+    };
+    if (!out.has(id)) out.set(id, []);
+    out.get(id).push(rec);
+  }
+  return out;
+}
+function ingestDetail(rows){
+  const header = rows[0].map(h => h.trim());
+  const ix = {}; header.forEach((h, i) => ix[h] = i);
+  const byId = new Map(), minWalk = new Map();
+  for (let i = 1; i < rows.length; i++){
+    const r = rows[i]; if (r.length < 6) continue;
+    const id = Number(r[ix.id_proyecto]), cat = r[ix.categoria];
+    const lat = Number(r[ix.poi_lat]), lon = Number(r[ix.poi_lon]), walk = Number(r[ix.dist_caminando_m]);
+    if (!isFinite(id) || !CAT[cat] || !isFinite(lat) || !isFinite(lon)) continue;
+    if (!byId.has(id)) byId.set(id, []);
+    byId.get(id).push({cat, nombre: r[ix.poi_nombre] || '', lat, lon, walk: isFinite(walk) ? walk : null});
+    if (isFinite(walk)){
+      const k = id + '|' + cat, prev = minWalk.get(k);
+      if (prev === undefined || walk < prev) minWalk.set(k, walk);
+    }
+  }
+  // target distance mu_c: median over projects of the nearest walking distance to a POI of category c
+  const perCat = {};
+  minWalk.forEach((v, k) => { const cat = k.split('|')[1]; (perCat[cat] = perCat[cat] || []).push(v); });
+  const mu = {};
+  for (const cat of Object.keys(perCat)){
+    const a = perCat[cat].sort((x, y) => x - y), n = a.length;
+    mu[cat] = n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2;
+  }
+  return {byId, mu};
+}
+
+/* ---------- geometry helpers, all in local planar meters around the project ---------- */
+class MinHeap{
+  constructor(){ this.a = []; }
+  get size(){ return this.a.length; }
+  push(it){
+    const a = this.a; a.push(it); let i = a.length - 1;
+    while (i > 0){ const p = (i - 1) >> 1; if (a[p][0] <= a[i][0]) break; [a[p], a[i]] = [a[i], a[p]]; i = p; }
+  }
+  pop(){
+    const a = this.a, top = a[0], last = a.pop();
+    if (a.length){
+      a[0] = last; let i = 0; const n = a.length;
+      for (;;){
+        const l = 2*i + 1, r = l + 1; let m = i;
+        if (l < n && a[l][0] < a[m][0]) m = l;
+        if (r < n && a[r][0] < a[m][0]) m = r;
+        if (m === i) break; [a[m], a[i]] = [a[i], a[m]]; i = m;
+      }
+    }
+    return top;
+  }
+}
+class GridIndex{
+  constructor(cs){ this.cs = cs; this.map = new Map(); }
+  add(x, y, item){
+    const k = Math.floor(x / this.cs) + ',' + Math.floor(y / this.cs);
+    let c = this.map.get(k); if (!c){ c = []; this.map.set(k, c); }
+    c.push({x, y, item});
+  }
+  within(x, y, R, fn){
+    const cs = this.cs;
+    const x0 = Math.floor((x - R) / cs), x1 = Math.floor((x + R) / cs);
+    const y0 = Math.floor((y - R) / cs), y1 = Math.floor((y + R) / cs);
+    for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++){
+      const c = this.map.get(cx + ',' + cy); if (!c) continue;
+      for (const p of c){ const d = Math.hypot(p.x - x, p.y - y); if (d <= R) fn(p, d); }
+    }
+  }
+  nearest(x, y, maxR){
+    const cs = this.cs, cx = Math.floor(x / cs), cy = Math.floor(y / cs), maxRing = Math.ceil(maxR / cs) + 1;
+    let best = null, bestD = Infinity;
+    for (let r = 0; r <= maxRing; r++){
+      for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++){
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const c = this.map.get((cx + dx) + ',' + (cy + dy)); if (!c) continue;
+        for (const p of c){ const d = Math.hypot(p.x - x, p.y - y); if (d < bestD){ bestD = d; best = p; } }
+      }
+      if (best && bestD <= r * cs) break;
+    }
+    return best && bestD <= maxR ? {p: best, d: bestD} : null;
+  }
+}
+function dijkstra(adj, start, maxD){
+  const dist = new Map([[start, 0]]), previo = new Map(), done = new Set(), h = new MinHeap();
+  h.push([0, start]);
+  while (h.size){
+    const [d, u] = h.pop();
+    if (done.has(u)) continue; done.add(u);
+    for (const [v, w] of (adj.get(u) || [])){
+      const nd = d + w;
+      if (nd <= maxD && nd < (dist.has(v) ? dist.get(v) : Infinity)){ dist.set(v, nd); previo.set(v, u); h.push([nd, v]); }
+    }
+  }
+  return {dist, previo};
+}
+function buildGraph(osm, lat0, lon0){
+  const cosl = Math.cos(lat0 * Math.PI / 180);
+  const nodes = new Map(), adj = new Map();
+  const key = p => p.lat.toFixed(5) + ',' + p.lon.toFixed(5);
+  const put = p => {
+    const k = key(p);
+    if (!nodes.has(k)) nodes.set(k, {lat: p.lat, lon: p.lon, x: (p.lon - lon0) * 111320 * cosl, y: (p.lat - lat0) * 111320});
+    return k;
+  };
+  for (const el of osm.elements || []){
+    if (el.type !== 'way' || !el.geometry || el.geometry.length < 2) continue;
+    for (let i = 0; i < el.geometry.length - 1; i++){
+      const ka = put(el.geometry[i]), kb = put(el.geometry[i + 1]);
+      if (ka === kb) continue;
+      const a = nodes.get(ka), b = nodes.get(kb), d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (!adj.has(ka)) adj.set(ka, []); if (!adj.has(kb)) adj.set(kb, []);
+      adj.get(ka).push([kb, d]); adj.get(kb).push([ka, d]);
+    }
+  }
+  if (!nodes.size) throw new Error('No road network was found around this project.');
+  const all = new GridIndex(50); nodes.forEach((n, k) => all.add(n.x, n.y, k));
+  const hit = all.nearest(0, 0, 300);
+  if (!hit) throw new Error('The project could not be connected to the road network.');
+  const startKey = hit.p.item;
+  const {dist, previo} = dijkstra(adj, startKey, WALK_BUDGET_M);
+  const reach = new GridIndex(50), reachedPts = [];
+  dist.forEach((d, k) => { const n = nodes.get(k); reach.add(n.x, n.y, k); reachedPts.push(n); });
+  return {lat0, lon0, cosl, nodes, adj, startKey, dist, previo, reach, reachedPts, polygon: null};
+}
+function toLatLon(g, x, y){ return [g.lat0 + y / 111320, g.lon0 + x / (111320 * g.cosl)]; }
+function pathTo(g, key){
+  if (!g.previo.has(key) && key !== g.startKey) return null;
+  const path = []; let cur = key, guard = 0;
+  while (cur !== g.startKey && guard++ < 20000){ path.push(cur); cur = g.previo.get(cur); if (cur === undefined) return null; }
+  path.push(g.startKey);
+  return path.reverse().map(k => { const n = g.nodes.get(k); return [n.lat, n.lon]; });
+}
+
+/* ---------- allocation of the counterfactual POIs ----------
+   score(g,c) = proximity + density + road, as in the thesis:
+     proximity = -|d_walk(g) - mu_c| / mu_c
+     density   =  min(n_existing_within_300m / 10, 1) * 0.4
+     road      = -min(dist_to_road / 80, 1) * 0.3
+   Candidates are grid cells snapped to the walking network, so d_walk is a network distance. */
+function placeCounterfactual(g, deltas, existing, mu, insidePoly){
+  const xs = g.reachedPts.map(n => n.x), ys = g.reachedPts.map(n => n.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  let cands = [];
+  for (let x = Math.floor(minX / GRID_STEP_M) * GRID_STEP_M; x <= maxX; x += GRID_STEP_M)
+    for (let y = Math.floor(minY / GRID_STEP_M) * GRID_STEP_M; y <= maxY; y += GRID_STEP_M){
+      if (insidePoly && !insidePoly(x, y)) continue;
+      const hit = g.reach.nearest(x, y, 100); if (!hit) continue;
+      const key = hit.p.item, walk = g.dist.get(key) + hit.d;
+      if (walk > WALK_BUDGET_M) continue;
+      cands.push({x, y, key, snap: hit.d, walk});
+    }
+  if (cands.length > MAX_CANDIDATES){
+    const step = cands.length / MAX_CANDIDATES;
+    cands = Array.from({length: MAX_CANDIDATES}, (_, i) => cands[Math.floor(i * step)]);
+  }
+  const allIdx = new GridIndex(150), catIdx = {};
+  for (const e of existing){ allIdx.add(e.x, e.y, e.cat); (catIdx[e.cat] = catIdx[e.cat] || new GridIndex(100)).add(e.x, e.y, e.cat); }
+  for (const c of cands){
+    let n = 0; allIdx.within(c.x, c.y, 300, () => n++);
+    c.dens = Math.min(n / 10, 1) * 0.4;
+    c.road = -Math.min(c.snap / 80, 1) * 0.3;
+  }
+  const placedIdx = new GridIndex(50), result = {};
+  for (const cat of MUTABLE){
+    const want = deltas[cat] || 0, cfg = CAT[cat], target = mu[cat] || MU_FALLBACK;
+    result[cat] = {requested: want, placed: []};
+    if (!want) continue;
+    const pool = [];
+    for (const c0 of cands){
+      let c = c0;
+      if (cfg.snap){ const nd = g.nodes.get(c0.key); c = {...c0, x: nd.x, y: nd.y, walk: g.dist.get(c0.key), road: 0}; }
+      let blocked = false;
+      if (catIdx[cat]) catIdx[cat].within(c.x, c.y, cfg.minSep, () => { blocked = true; });
+      if (blocked) continue;
+      pool.push({...c, score: -Math.abs(c.walk - target) / target + c.dens + c.road});
+    }
+    pool.sort((a, b) => b.score - a.score);
+    const chosen = [];
+    for (const c of pool){
+      if (chosen.length >= want) break;
+      if (chosen.some(q => Math.hypot(q.x - c.x, q.y - c.y) < cfg.minSep)) continue;
+      let clash = false; placedIdx.within(c.x, c.y, CROSS_SEP_M, () => { clash = true; });
+      if (clash) continue;
+      chosen.push(c); placedIdx.add(c.x, c.y, cat);
+    }
+    result[cat].placed = chosen.map(c => { const [lat, lon] = toLatLon(g, c.x, c.y); return {cat, lat, lon, key: c.key, walk: c.walk, x: c.x, y: c.y}; });
+  }
+  return result;
+}
+/* ---------- existing POIs for a custom location, straight from OpenStreetMap ---------- */
+const OSM_TAGS = {
+  Bus: ['highway=bus_stop', 'amenity=bus_station'],
+  Primaria: ['amenity=school'],
+  Universitaria: ['amenity=university', 'amenity=college'],
+  Hospitales: ['amenity=hospital', 'amenity=clinic'],
+  Alimentacion: ['amenity=restaurant', 'amenity=cafe', 'amenity=fast_food', 'amenity=food_court'],
+  Tienda: ['shop=convenience', 'shop=supermarket'],
+  EspaciosPublicos: ['leisure=park', 'leisure=playground', 'place=square'],
+  Farmacias: ['amenity=pharmacy'],
+};
+function poiQuery(lat, lon, radius){
+  const parts = [];
+  for (const c of CATS) for (const t of OSM_TAGS[c.key]){
+    const [k, v] = t.split('=');
+    parts.push('node["' + k + '"="' + v + '"](around:' + radius + ',' + lat + ',' + lon + ');');
+    parts.push('way["' + k + '"="' + v + '"](around:' + radius + ',' + lat + ',' + lon + ');');
+  }
+  return '[out:json][timeout:50];(' + parts.join('') + ');out center tags;';
+}
+// classifies OSM elements into the eight subcategories and merges same-type POIs closer than dedupM
+function parseOsmPois(osm, lat0, lon0, dedupM = 60){
+  const cosl = Math.cos(lat0 * Math.PI / 180), byCat = {};
+  for (const el of osm.elements || []){
+    const tags = el.tags || {};
+    const lat = el.lat ?? (el.center && el.center.lat), lon = el.lon ?? (el.center && el.center.lon);
+    if (lat == null || lon == null) continue;
+    const cat = CATS.find(c => OSM_TAGS[c.key].some(t => { const [k, v] = t.split('='); return tags[k] === v; }));
+    if (!cat) continue;
+    const x = (lon - lon0) * 111320 * cosl, y = (lat - lat0) * 111320;
+    (byCat[cat.key] = byCat[cat.key] || []).push({cat: cat.key, nombre: tags.name || '', lat, lon, x, y, d: Math.hypot(x, y)});
+  }
+  const out = [];
+  for (const key of Object.keys(byCat)){
+    const kept = [];
+    for (const p of byCat[key].sort((a, b) => a.d - b.d))
+      if (!kept.some(q => Math.hypot(q.x - p.x, q.y - p.y) < dedupM)) kept.push(p);
+    for (const p of kept) out.push({cat: p.cat, nombre: p.nombre, lat: p.lat, lon: p.lon, walk: null});
+  }
+  return out;
+}
+// same criterion as the dataset: snapped to the network within 200 m and at most 1,000 m walking
+function attachWalking(g, rows){
+  const out = [];
+  for (const r of rows){
+    const x = (r.lon - g.lon0) * 111320 * g.cosl, y = (r.lat - g.lat0) * 111320;
+    const hit = g.reach.nearest(x, y, 200); if (!hit) continue;
+    const walk = g.dist.get(hit.p.item) + hit.d;
+    if (walk <= WALK_BUDGET_M) out.push({...r, walk});
+  }
+  return out;
+}
+/* ==== LOGIC END ==== */
+
+/* ================================ UI ================================ */
+if (location.protocol === 'file:') document.getElementById('fileBanner').style.display = 'block';
+
+const OVERPASS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
+];
+async function overpassQuery(query, onProgress){
+  const errors = []; let n = 0; const total = OVERPASS.length * 2;
+  for (const url of OVERPASS){
+    const host = new URL(url).hostname;
+    for (let attempt = 1; attempt <= 2; attempt++){
+      n++;
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 90000);
+      try {
+        if (onProgress) onProgress('Downloading the walking network from ' + host + ' (attempt ' + n + ' of ' + total + ')...');
+        const res = await fetch(url, {method: 'POST', body: 'data=' + encodeURIComponent(query), signal: ctrl.signal});
+        clearTimeout(timer);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const json = await res.json();
+        if (json.remark && /runtime error|timed out|out of memory/i.test(json.remark))
+          throw new Error('server busy (' + String(json.remark).slice(0, 50) + ')');
+        return json;
+      } catch (e){
+        clearTimeout(timer);
+        let why = (e && e.message) || 'unknown error';
+        if (e && e.name === 'AbortError') why = 'no answer after 90 s';
+        else if (why === 'Failed to fetch') why = 'Failed to fetch (blocked by the network, or offline)';
+        errors.push(host + ': ' + why);
+        console.warn('Overpass attempt ' + n + ' failed on ' + host + ':', e);
+        await sleep(1000 * attempt);
+      }
+    }
+  }
+  throw new Error('All Overpass servers failed. ' + [...new Set(errors)].join(' | '));
+}
+function fallbackHint(id){
+  if (id === MANUAL_ID) return '';
+  return ' Fallback: run  python descargar_redes_viales.py ' + id + '  and load redes_viales/red_vial_' + id + '.json with "Load data files".';
+}
+function roadQuery(lat, lon){
+  const dLat = BBOX_PAD_M / 111320, dLon = BBOX_PAD_M / (111320 * Math.cos(lat * Math.PI / 180));
+  return '[out:json][timeout:50];way["highway"]["highway"!~"motorway|motorway_link|trunk|trunk_link"]["foot"!~"no"]('
+       + (lat - dLat) + ',' + (lon - dLon) + ',' + (lat + dLat) + ',' + (lon + dLon) + ');out geom;';
+}
+
+const $ = id => document.getElementById(id);
+const S = {
+  projects: null, cf: null, detail: null, mu: {}, networks: new Map(),
+  pid: null, cfList: [], cfIdx: 0,
+  existingVisible: true, cfVisible: false, isoVisible: false, routesVisible: false,
+  placement: null, busy: false,
+};
+const graphs = new Map(), pending = new Map();
+
+const map = L.map('map', {zoomControl: true, maxZoom: 19}).setView([-12.05, -77.05], 11);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+            {maxZoom: 19, maxNativeZoom: 16, attribution: '&copy; Esri'}).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+            {maxZoom: 19, maxNativeZoom: 16}).addTo(map);
+const isoLayer = L.layerGroup().addTo(map);
+const routeLayer = L.layerGroup().addTo(map);
+const existingLayer = L.layerGroup().addTo(map);
+const cfLayer = L.layerGroup().addTo(map);
+let houseMarker = null;
+
+const iconCache = {};
+function poiIcon(cat, kind){
+  const k = cat + '|' + kind;
+  if (!iconCache[k]){
+    const size = kind === 'cf' ? 30 : 24;
+    iconCache[k] = L.divIcon({html: '<div class="poi-badge ' + kind + '" style="background:' + CAT[cat].color + '">' + svgIcon(CAT[cat].icon) + '</div>',
+                              className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2]});
+  }
+  return iconCache[k];
+}
+function houseIcon(){
+  return L.divIcon({html: '<div class="house-badge">' + svgIcon('house') + '</div>', className: '', iconSize: [38, 38], iconAnchor: [19, 19]});
+}
+
+/* ---------- status line ---------- */
+let statusTimer = null;
+function setStatus(msg, isErr){
+  const el = $('status'); clearTimeout(statusTimer);
+  if (!msg){ el.style.display = 'none'; el.textContent = ''; return; }
+  el.textContent = msg; el.className = 'status' + (isErr ? ' err' : ''); el.style.display = 'block';
+  // errors stay on screen until the next action, so they cannot be missed
+}
+
+/* ---------- loading the data files ---------- */
+async function ingestFile(file){
+  const name = file.name.toLowerCase();
+  try {
+    if (name.endsWith('.xlsx') || name.endsWith('.xls')){
+      const wb = XLSX.read(await file.arrayBuffer(), {type: 'array'});
+      const recs = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {defval: null});
+      if (recs.length && 'LATITUD' in recs[0] && 'PROYECTO' in recs[0]){ S.projects = ingestProjects(recs); return 'projects'; }
+      return null;
+    }
+    if (name.endsWith('.json')){
+      const j = JSON.parse(await file.text());
+      if (j && Array.isArray(j.elements) && j.id_proyecto != null){ S.networks.set(Number(j.id_proyecto), j); return 'network'; }
+      return null;
+    }
+    const rows = parseCSV(await file.text());
+    if (!rows.length) return null;
+    const header = rows[0].map(h => h.trim());
+    if (header.includes('cf_num') && header.includes('metodo')){ S.cf = ingestCounterfactuals(rows); return 'cf'; }
+    if (header.includes('poi_lat') && header.includes('dist_caminando_m')){
+      const d = ingestDetail(rows); S.detail = d.byId; S.mu = d.mu; return 'detail';
+    }
+    if (header.includes('LATITUD') && header.includes('PROYECTO')){
+      const recs = rows.slice(1).map(r => Object.fromEntries(header.map((h, i) => [h, r[i]])));
+      S.projects = ingestProjects(recs); return 'projects';
+    }
+  } catch (e){ console.error(e); setStatus('Could not read ' + file.name + ': ' + e.message, true); }
+  return null;
+}
+async function loadFiles(files){
+  setStatus('Reading files...');
+  const seen = [];
+  for (const f of files){ const kind = await ingestFile(f); if (kind) seen.push(kind); else setStatus('Unrecognized file: ' + f.name, true); }
+  updateChips();
+  if (S.projects && S.cf && S.detail){
+    if (seen.some(k => k !== 'network')) initProjectSelect();
+    if (!$('status').classList.contains('err')) setStatus('');
+  }
+  else setStatus(seen.length ? 'Loaded. Still missing: ' + [!S.projects && 'projects', !S.cf && 'counterfactuals', !S.detail && 'POI detail'].filter(Boolean).join(', ') + '.' : '', false);
+  renderAll();
+}
+function updateChips(){
+  const set = (id, ok, txt) => { const e = $(id); e.className = 'chip' + (ok ? ' ok' : ''); e.textContent = txt; };
+  set('chipProjects', !!S.projects, 'Projects' + (S.projects ? ' (' + S.projects.size + ')' : ''));
+  set('chipCF', !!S.cf, 'Counterfactuals' + (S.cf ? ' (' + S.cf.size + ' projects)' : ''));
+  set('chipDetail', !!S.detail, 'POI detail' + (S.detail ? ' (' + S.detail.size + ' projects)' : ''));
+  set('chipNet', S.networks.size > 0, S.networks.size ? 'Road networks (' + S.networks.size + ')' : 'Road networks (optional)');
+}
+$('fileInput').addEventListener('change', e => { if (e.target.files.length) loadFiles([...e.target.files]); e.target.value = ''; });
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) loadFiles([...e.dataTransfer.files]); });
+
+function initProjectSelect(){
+  const items = [];
+  for (const [id, list] of S.cf){
+    const p = S.projects.get(id);
+    if (id === MANUAL_ID || !p || !S.detail.has(id)) continue;
+    items.push({id, p, score: list[0].scoreBefore});
+  }
+  items.sort((a, b) => b.score - a.score);
+  const sel = $('selProject');
+  if (!items.length){
+    sel.innerHTML = '<option value="">No project appears in all three files</option>'; sel.disabled = true;
+    setStatus('No project id appears in the three files at once. Check that they come from the same run.', true); return;
+  }
+  sel.innerHTML = '<option value="">Select non-livable project (' + items.length + ')</option>'
+    + items.map(it => '<option value="' + it.id + '">' + esc(it.p.nombre) + ', ' + esc(it.p.distrito)
+                    + ' (score ' + it.score.toFixed(3) + ')</option>').join('');
+  sel.disabled = false;
+}
+
+/* ---------- project selection ---------- */
+$('selProject').addEventListener('change', e => selectProject(e.target.value ? Number(e.target.value) : null));
+
+function resetProjectState(){
+  if (houseMarker){ map.removeLayer(houseMarker); houseMarker = null; }
+  isoLayer.clearLayers(); routeLayer.clearLayers(); existingLayer.clearLayers(); cfLayer.clearLayers();
+  if (!map.hasLayer(existingLayer)) map.addLayer(existingLayer);
+  Object.assign(S, {pid: null, cfList: [], cfIdx: 0, existingVisible: true, cfVisible: false,
+                    isoVisible: false, routesVisible: false, placement: null});
+}
+function selectProject(id){
+  resetProjectState(); setStatus('');
+  if (!id){ $('selCF').innerHTML = '<option value="">-</option>'; renderAll(); return; }
+  S.pid = id;
+  const p = S.projects.get(id);
+  houseMarker = L.marker([p.lat, p.lon], {icon: houseIcon(), zIndexOffset: 2000}).addTo(map)
+    .bindPopup('<b>' + esc(p.nombre) + '</b><br>' + esc(p.distrito));
+  S.cfList = (S.cf.get(id) || []).slice().sort((a, b) => a.cost - b.cost);
+  $('selCF').innerHTML = S.cfList.map((c, i) => '<option value="' + i + '">' + (c.manual
+      ? 'Custom request (cost ' + Math.round(c.cost) + ')'
+      : 'Counterfactual ' + (i + 1) + ' (cost ' + Math.round(c.cost) + ', score after ' + c.scoreAfter.toFixed(3) + ')') + '</option>').join('');
+  drawExisting();
+  renderAll();
+}
+function drawExisting(){
+  existingLayer.clearLayers();
+  const rows = S.detail.get(S.pid) || [], pts = [[S.projects.get(S.pid).lat, S.projects.get(S.pid).lon]];
+  for (const r of rows){
+    L.marker([r.lat, r.lon], {icon: poiIcon(r.cat, 'existing'), keyboard: false})
+      .bindPopup('<b>' + esc(CAT[r.cat].label) + '</b>' + (r.nombre ? '<br>' + esc(r.nombre) : '')
+                 + (r.walk != null ? '<br>Walking distance: ' + Math.round(r.walk) + ' m' : ''))
+      .addTo(existingLayer);
+    pts.push([r.lat, r.lon]);
+  }
+  map.fitBounds(L.latLngBounds(pts).pad(0.12), {maxZoom: 16});
+}
+$('selCF').addEventListener('change', async e => {
+  S.cfIdx = Number(e.target.value) || 0;
+  if (S.cfVisible){ clearCF(); await showCF(); } else renderAll();
+});
+
+/* ---------- graph and 15 minute area ---------- */
+function ensureGraph(){
+  const id = S.pid;
+  if (graphs.has(id)) return Promise.resolve(graphs.get(id));
+  if (pending.has(id)) return pending.get(id);
+  const p = S.projects.get(id);
+  const source = S.networks.has(id) ? Promise.resolve(S.networks.get(id)) : overpassQuery(roadQuery(p.lat, p.lon), m => setStatus(m));
+  const job = source.then(osm => {
+    const g = buildGraph(osm, p.lat, p.lon); graphs.set(id, g); pending.delete(id); return g;
+  }).catch(e => { pending.delete(id); throw e; });
+  pending.set(id, job); return job;
+}
+function polygonOf(g){
+  if (g.polygon !== null) return g.polygon || null;
+  let poly = null;
+  try {
+    const fc = turf.featureCollection(g.reachedPts.map(n => turf.point([n.lon, n.lat])));
+    poly = turf.concave(fc, {maxEdge: 0.35, units: 'kilometers'}) || turf.convex(fc);
+  } catch (e){ console.error(e); }
+  g.polygon = poly || false; return poly;
+}
+async function toggleIso(){
+  if (S.isoVisible){ isoLayer.clearLayers(); S.isoVisible = false; renderControls(); return; }
+  const id = S.pid; S.busy = true; renderControls();
+  try {
+    setStatus('Downloading the walking network...');
+    const g = await ensureGraph(); if (S.pid !== id) return;
+    const poly = polygonOf(g);
+    if (!poly) throw new Error('The walking area could not be built for this project.');
+    isoLayer.clearLayers();
+    const layer = L.geoJSON(poly, {style: {color: '#3B5B7A', weight: 2, fillColor: '#3B5B7A', fillOpacity: 0.09}}).addTo(isoLayer);
+    S.isoVisible = true; setStatus('');
+    map.fitBounds(layer.getBounds().pad(0.08), {maxZoom: 17});
+  } catch (e){ console.error(e); setStatus('Walking area failed: ' + e.message + fallbackHint(id), true); }
+  finally { S.busy = false; renderControls(); }
+}
+$('btnIso').addEventListener('click', toggleIso);
+
+/* ---------- counterfactual POIs ---------- */
+function currentCF(){ return S.cfList[S.cfIdx] || null; }
+function clearCF(){
+  cfLayer.clearLayers(); routeLayer.clearLayers();
+  S.cfVisible = false; S.routesVisible = false; S.placement = null;
+}
+async function showCF(){
+  const cf = currentCF(); if (!cf) return;
+  const id = S.pid; S.busy = true; renderControls();
+  try {
+    setStatus('Preparing the walking network...');
+    const g = await ensureGraph(); if (S.pid !== id) return;
+    setStatus('Locating the recommended POIs...');
+    await sleep(0);
+    const p = S.projects.get(id), poly = polygonOf(g);
+    const insidePoly = poly ? (x, y) => { const [la, lo] = toLatLon(g, x, y); return turf.booleanPointInPolygon(turf.point([lo, la]), poly); } : null;
+    const existing = (S.detail.get(id) || []).map(r => ({cat: r.cat, x: (r.lon - g.lon0) * 111320 * g.cosl, y: (r.lat - g.lat0) * 111320}));
+    const res = placeCounterfactual(g, cf.deltas, existing, S.mu, insidePoly);
+    cfLayer.clearLayers();
+    for (const cat of MUTABLE) for (const q of res[cat].placed){
+      L.marker([q.lat, q.lon], {icon: poiIcon(cat, 'cf'), zIndexOffset: 1000, keyboard: false})
+        .bindPopup('<b>' + esc(CAT[cat].label) + '</b> (counterfactual)<br>Walking distance: ' + Math.round(q.walk) + ' m').addTo(cfLayer);
+    }
+    S.placement = res; S.cfVisible = true; setStatus('');
+  } catch (e){ console.error(e); setStatus('Could not place the counterfactual POIs: ' + e.message + fallbackHint(id), true); }
+  finally { S.busy = false; renderAll(); }
+}
+$('btnCF').addEventListener('click', async () => {
+  if (S.cfVisible){ clearCF(); renderAll(); } else await showCF();
+});
+
+/* ---------- routes ---------- */
+function toggleRoutes(){
+  if (S.routesVisible){ routeLayer.clearLayers(); S.routesVisible = false; renderControls(); return; }
+  const g = graphs.get(S.pid), p = S.projects.get(S.pid); if (!g || !S.placement) return;
+  routeLayer.clearLayers(); let drawn = 0, total = 0;
+  for (const cat of MUTABLE) for (const q of S.placement[cat].placed){
+    total++;
+    const path = pathTo(g, q.key); if (!path) continue;
+    L.polyline([[p.lat, p.lon], ...path, [q.lat, q.lon]], {color: '#111111', weight: 2.5, opacity: 0.9})
+      .bindPopup(esc(CAT[cat].label) + ': ' + Math.round(q.walk) + ' m walking').addTo(routeLayer);
+    drawn++;
+  }
+  S.routesVisible = drawn > 0;
+  setStatus(drawn < total ? drawn + ' of ' + total + ' routes could be traced.' : '', drawn < total);
+  renderControls();
+}
+$('btnRoutes').addEventListener('click', toggleRoutes);
+$('btnExisting').addEventListener('click', () => {
+  S.existingVisible = !S.existingVisible;
+  if (S.existingVisible) map.addLayer(existingLayer); else map.removeLayer(existingLayer);
+  renderControls();
+});
+
+/* ---------- rendering ---------- */
+function renderTitle(){
+  const el = $('titleCard');
+  if (!S.pid){ el.innerHTML = '<span class="t-left"><span class="t-name">Select a non-livable project</span></span>'; return; }
+  const p = S.projects.get(S.pid), cf = currentCF();
+  if (cf && cf.manual){
+    el.innerHTML = '<span class="t-left"><span class="t-name">' + esc(p.nombre) + '</span><span class="t-sub">' + esc(p.distrito) + '</span></span>'
+      + '<span class="t-right">Placement test, no habitability score</span>';
+    return;
+  }
+  const before = cf ? cf.scoreBefore : NaN;
+  let score = before, cls = before >= THRESHOLD ? 'green' : 'red', extra = '';
+  if (S.cfVisible && cf){
+    score = cf.scoreAfter; cls = score >= THRESHOLD ? 'green' : 'red';
+    extra = '<span class="before">(before ' + before.toFixed(3) + ')</span>';
+  }
+  el.innerHTML = '<span class="t-left"><span class="t-name">' + esc(p.nombre) + '</span><span class="t-sub">' + esc(p.distrito) + ', id ' + p.id + '</span></span>'
+    + '<span class="t-right">Habitability score<span class="score ' + cls + '">' + (isFinite(score) ? score.toFixed(3) : '-') + '</span>' + extra + '</span>';
+}
+function renderExistingPanel(){
+  if (!S.pid){ $('existingList').innerHTML = '<div class="empty">Select a project.</div>'; $('existingWarn').style.display = 'none'; return; }
+  const rows = S.detail.get(S.pid) || [], counts = {};
+  for (const r of rows) counts[r.cat] = (counts[r.cat] || 0) + 1;
+  $('existingList').innerHTML = CATS.map(c => '<div class="poirow"><span class="ico" style="color:' + c.color + '">' + svgIcon(c.icon) + '</span><span class="lbl">'
+      + c.label + '</span><span class="cnt">' + (counts[c.key] || 0) + '</span></div>').join('');
+  const cf = currentCF(), diff = [];
+  if (cf) for (const c of CATS) if (c.key in cf.existing && cf.existing[c.key] !== (counts[c.key] || 0)) diff.push(c.label);
+  const w = $('existingWarn');
+  if (cf && cf.manual){ w.textContent = 'Custom location: the POIs come from OpenStreetMap with the same tags as the dataset, without its name filters.'; w.style.display = 'block'; }
+  else if (diff.length){ w.textContent = 'These counts differ from the model input for: ' + diff.join(', ') + '. Check that the POI detail file comes from the same run.'; w.style.display = 'block'; }
+  else w.style.display = 'none';
+}
+function renderCfPanel(){
+  const cf = currentCF();
+  if (!S.pid || !cf){ $('cfList').innerHTML = '<div class="empty">Select a project.</div>'; $('cfSummary').innerHTML = ''; return; }
+  $('cfList').innerHTML = MUTABLE.map(k => {
+    const want = cf.deltas[k], got = S.placement ? S.placement[k].placed.length : null;
+    const short = got !== null && got < want;
+    return '<div class="poirow"><span class="ico" style="color:' + CAT[k].color + '">' + svgIcon(CAT[k].icon) + '</span><span class="lbl">' + CAT[k].label
+      + '</span><span class="cnt' + (want ? '' : ' dim') + '"' + (want ? ' style="color:' + CAT[k].color + '"' : '') + '>+' + want + '</span>'
+      + (short ? '<span class="note">' + got + ' placed</span>' : '') + '</div>';
+  }).join('');
+  $('cfSummary').innerHTML = cf.manual ? '<div class="kv"><span>Cost</span><b>' + Math.round(cf.cost) + '</b></div><div class="caption">Custom request: only the placement is evaluated.</div>'
+    : '<div class="kv"><span>Cost</span><b>' + Math.round(cf.cost) + '</b>'
+    + '<span>Score after</span><b>' + cf.scoreAfter.toFixed(3) + '</b>'
+    + '<span>Change in score</span><b>' + (cf.deltaScore >= 0 ? '+' : '') + cf.deltaScore.toFixed(3) + '</b>'
+    + (cf.valid === null ? '' : '<span>Classifier label</span><b>' + (cf.valid ? 'habitable' : 'non-habitable') + '</b>') + '</div>'
+    + (cf.scoreAfter < THRESHOLD ? '<div class="caption">The score after the intervention stays below the threshold of ' + THRESHOLD.toFixed(2) + '.</div>' : '');
+}
+function renderControls(){
+  const has = S.pid !== null, cf = has && currentCF(), busy = S.busy;
+  $('btnIso').disabled = !has || busy;
+  $('btnIso').textContent = S.isoVisible ? 'Hide 15 min walking area' : 'Draw 15 min walking area';
+  $('btnIso').classList.toggle('on', S.isoVisible);
+  $('selCF').disabled = !has || busy;
+  $('btnRoutes').disabled = !S.cfVisible || busy;
+  $('btnRoutes').textContent = S.routesVisible ? 'Hide routes' : 'Trace routes to house';
+  $('btnRoutes').classList.toggle('on', S.routesVisible);
+  $('btnExisting').disabled = !has; $('btnExisting').textContent = S.existingVisible ? 'Hide' : 'Show';
+  $('btnCF').disabled = !cf || busy; $('btnCF').textContent = S.cfVisible ? 'Hide' : 'Show';
+  const ready = !!(S.projects && S.cf && S.detail);
+  ['inLat', 'inLon', 'inOSM', 'btnManual'].concat(MUTABLE.map(k => 'qty_' + k)).forEach(id => { $(id).disabled = !ready || busy; });
+}
+/* ---------- placement test at a custom location ---------- */
+$('manualQty').innerHTML = MUTABLE.map(k => '<div class="qrow"><span class="ico" style="color:' + CAT[k].color + '">' + svgIcon(CAT[k].icon)
+  + '</span><label for="qty_' + k + '">' + CAT[k].label + '</label><input type="number" id="qty_' + k + '" min="0" max="50" value="0"></div>').join('');
+
+// pasting "lat, lon" (as copied from Google Maps) into the latitude box fills both boxes
+$('inLat').addEventListener('input', e => {
+  const m = e.target.value.replace(/\u2212/g, '-').match(/^\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m){ e.target.value = m[1]; $('inLon').value = m[2]; }
+});
+function readLatLon(){
+  const clean = t => t.replace(/\u2212/g, '-').trim();
+  const a = clean($('inLat').value), b = clean($('inLon').value);
+  const lat = Number(a), lon = Number(b);
+  if (a === '' || b === '' || !isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return {lat, lon};
+}
+async function runManual(){
+  const loc = readLatLon();
+  if (!loc){ setStatus('Enter a valid latitude and longitude, for example -12.0464 and -77.0428.', true); return; }
+  if (Math.abs(loc.lat) > 60 && Math.abs(loc.lon) < 30){ setStatus('Latitude and longitude look swapped (Lima is near -12, -77).', true); return; }
+  const deltas = {}; let total = 0;
+  for (const k of MUTABLE){ const v = Math.max(0, Math.min(50, parseInt($('qty_' + k).value, 10) || 0)); deltas[k] = v; total += v; }
+  if (!total){ setStatus('Choose how many POIs to place, at least one.', true); return; }
+
+  // the custom location is handled as a virtual project, so it reuses the whole pipeline
+  S.projects.set(MANUAL_ID, {id: MANUAL_ID, nombre: 'Custom location', distrito: loc.lat.toFixed(5) + ', ' + loc.lon.toFixed(5), lat: loc.lat, lon: loc.lon});
+  S.detail.set(MANUAL_ID, []);
+  S.cf.set(MANUAL_ID, [{cf_num: 0, scoreBefore: NaN, scoreAfter: NaN, deltas, existing: {}, deltaScore: NaN, valid: null, manual: true,
+                        cost: MUTABLE.reduce((sum, k) => sum + deltas[k] * (UNIT_COST[k] || 0), 0)}]);
+  graphs.delete(MANUAL_ID); pending.delete(MANUAL_ID);
+  $('selProject').value = '';
+  selectProject(MANUAL_ID);
+
+  let warning = '';
+  S.busy = true; renderControls();
+  try {
+    const g = await ensureGraph();
+    if (S.pid !== MANUAL_ID) return;
+    if ($('inOSM').checked){
+      try {
+        setStatus('Downloading existing POIs...');
+        const osm = await overpassQuery(poiQuery(loc.lat, loc.lon, WALK_BUDGET_M), m => setStatus(m.replace('the walking network', 'the existing POIs')));
+        S.detail.set(MANUAL_ID, attachWalking(g, parseOsmPois(osm, loc.lat, loc.lon)));
+      } catch (e){ console.warn(e); warning = 'Existing POIs could not be downloaded, so the placement ran without them.'; }
+      if (S.pid !== MANUAL_ID) return;
+      drawExisting();
+    }
+  } catch (e){
+    console.error(e); S.busy = false;
+    setStatus('Could not download the walking network: ' + e.message, true); renderAll(); return;
+  } finally { S.busy = false; }
+  await showCF();
+  if (warning) setStatus(warning, true);
+}
+$('btnManual').addEventListener('click', runManual);
+
+function renderManualResults(){
+  const box = $('manualResults');
+  if (S.pid !== MANUAL_ID || !S.placement){ box.innerHTML = ''; return; }
+  const rows = MUTABLE.filter(k => S.placement[k].requested > 0).map(k => {
+    const pl = S.placement[k].placed, mean = pl.length ? pl.reduce((sum, q) => sum + q.walk, 0) / pl.length : null;
+    return '<tr><td>' + CAT[k].label + '</td><td>' + pl.length + '/' + S.placement[k].requested + '</td><td>'
+      + (mean === null ? '-' : Math.round(mean)) + '</td><td>' + Math.round(S.mu[k] || MU_FALLBACK) + '</td></tr>';
+  }).join('');
+  box.innerHTML = '<table class="mt"><thead><tr><th>Type</th><th>Placed</th><th>Mean walk (m)</th><th>Target (m)</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<div class="caption">The proximity term pulls the walking distance of each type toward its target. The density and separation terms can move it away when they conflict.</div>';
+}
+
+function renderAll(){ renderTitle(); renderExistingPanel(); renderCfPanel(); renderControls(); renderManualResults(); }
+renderAll();
+</script>
+</body>
+</html>
